@@ -15,5 +15,7 @@ fn main() -> anyhow::Result<()> {
 
     info!("mcp-code-explorer server starting");
 
+    mcp::server::run()?;
+
     Ok(())
 }
