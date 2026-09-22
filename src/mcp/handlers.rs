@@ -3,17 +3,44 @@
 
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 
 use crate::indexer::extractor::Symbol;
 use crate::indexer::index::index_directory;
 use crate::indexer::parser::TsParser;
+
+// ── Validation ────────────────────────────────────────────────────────────────
+
+fn require_dir(path: &str, label: &str) -> Result<()> {
+    if path.trim().is_empty() {
+        bail!("{label} must not be empty");
+    }
+    let p = Path::new(path);
+    if !p.exists() {
+        bail!("{label} does not exist: {path}");
+    }
+    if !p.is_dir() {
+        bail!("{label} is not a directory: {path}");
+    }
+    Ok(())
+}
+
+fn require_file(path: &str, label: &str) -> Result<()> {
+    if path.trim().is_empty() {
+        bail!("{label} must not be empty");
+    }
+    Ok(()) // existence is checked when the file is actually read
+}
 
 // ── search_symbols ────────────────────────────────────────────────────────────
 
 /// Searches the symbol index for names that contain `query` (case-insensitive).
 /// Returns a formatted list of matches with file, line, and kind.
 pub fn search_symbols(repo_path: &str, query: &str) -> Result<String> {
+    require_dir(repo_path, "repo_path")?;
+    if query.trim().is_empty() {
+        bail!("query must not be empty");
+    }
     let root = Path::new(repo_path);
     let symbols = index_directory(root)?;
 
@@ -44,6 +71,8 @@ pub fn search_symbols(repo_path: &str, query: &str) -> Result<String> {
 
 /// Returns all symbols defined in `file_path`, sorted by line number.
 pub fn get_file_structure(repo_path: &str, file_path: &str) -> Result<String> {
+    require_dir(repo_path, "repo_path")?;
+    require_file(file_path, "file_path")?;
     let root = Path::new(repo_path);
     let symbols = index_directory(root)?;
 
@@ -72,6 +101,10 @@ pub fn get_file_structure(repo_path: &str, file_path: &str) -> Result<String> {
 /// Searches all indexed TypeScript files for occurrences of `name` as an
 /// identifier in the AST (not just string matching).
 pub fn find_references(repo_path: &str, name: &str) -> Result<String> {
+    require_dir(repo_path, "repo_path")?;
+    if name.trim().is_empty() {
+        bail!("name must not be empty");
+    }
     use crate::indexer::walker::Walker;
 
     let root = Path::new(repo_path);
@@ -130,6 +163,8 @@ fn collect_identifier_refs(
 
 /// Returns all import declarations found in `file_path`.
 pub fn list_dependencies(repo_path: &str, file_path: &str) -> Result<String> {
+    require_dir(repo_path, "repo_path")?;
+    require_file(file_path, "file_path")?;
     let root = Path::new(repo_path);
 
     // Resolve the file — accept absolute paths or repo-relative paths.
@@ -331,6 +366,48 @@ export type ID = string | number;" as &[u8],
         let dir = make_repo();
         let result =
             list_dependencies(dir.path().to_str().unwrap(), "/nonexistent/path/file.ts");
+        assert!(result.is_err());
+    }
+
+    // ── error / validation paths ──────────────────────────────────────────
+
+    #[test]
+    fn search_empty_repo_path_returns_error() {
+        let result = search_symbols("", "greet");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn search_nonexistent_repo_returns_error() {
+        let result = search_symbols("/nonexistent/repo/path", "greet");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn search_empty_query_returns_error() {
+        let dir = make_repo();
+        let result = search_symbols(dir.path().to_str().unwrap(), "");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn get_structure_empty_file_path_returns_error() {
+        let dir = make_repo();
+        let result = get_file_structure(dir.path().to_str().unwrap(), "");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn find_references_empty_name_returns_error() {
+        let dir = make_repo();
+        let result = find_references(dir.path().to_str().unwrap(), "");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn list_deps_empty_file_path_returns_error() {
+        let dir = make_repo();
+        let result = list_dependencies(dir.path().to_str().unwrap(), "");
         assert!(result.is_err());
     }
 }

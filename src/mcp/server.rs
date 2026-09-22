@@ -18,7 +18,11 @@ use crate::mcp::types::{
 };
 
 /// Runs the JSON-RPC stdio loop until stdin is closed.
-pub fn run() -> Result<()> {
+///
+/// `default_repo` is injected into every `tools/call` request that does not
+/// supply its own `repo_path` argument, allowing the server to be pre-pointed
+/// at a repository without requiring the client to send the path every time.
+pub fn run(default_repo: Option<&str>) -> Result<()> {
     let stdin = io::stdin();
     let stdout = io::stdout();
     let mut out = stdout.lock();
@@ -42,13 +46,12 @@ pub fn run() -> Result<()> {
                 serde_json::to_vec(&resp)?
             }
             Ok(req) => {
-                // Notifications (no id) are processed but not answered.
                 if req.id.is_none() {
                     handle_notification(&req.method);
                     continue;
                 }
                 let id = req.id.clone().unwrap_or(Value::Null);
-                handle_request(id, &req.method, req.params)?
+                handle_request(id, &req.method, req.params, default_repo)?
             }
         };
 
@@ -64,7 +67,12 @@ fn handle_notification(method: &str) {
     debug!("notification: {method}");
 }
 
-fn handle_request(id: Value, method: &str, params: Value) -> Result<Vec<u8>> {
+fn handle_request(
+    id: Value,
+    method: &str,
+    params: Value,
+    default_repo: Option<&str>,
+) -> Result<Vec<u8>> {
     let bytes = match method {
         "initialize" => {
             match serde_json::from_value::<InitializeParams>(params) {
@@ -96,7 +104,13 @@ fn handle_request(id: Value, method: &str, params: Value) -> Result<Vec<u8>> {
 
         "tools/call" => {
             match serde_json::from_value::<CallToolParams>(params) {
-                Ok(p) => {
+                Ok(mut p) => {
+                    // Inject default repo_path when the call omits it.
+                    if let Some(repo) = default_repo {
+                        if p.arguments.get("repo_path").is_none() {
+                            p.arguments["repo_path"] = json!(repo);
+                        }
+                    }
                     let result = tools::dispatch(&p);
                     serde_json::to_vec(&Response::ok(id, serde_json::to_value(result)?))?
                 }
@@ -116,7 +130,6 @@ fn handle_request(id: Value, method: &str, params: Value) -> Result<Vec<u8>> {
         }
     };
 
-    // Guard: the protocol channel must never receive non-JSON noise.
     if let Err(e) = serde_json::from_slice::<Value>(&bytes) {
         error!("BUG: serialized an invalid JSON response: {e}");
         let fallback = ErrorResponse::new(Value::Null, INTERNAL_ERROR, "internal error");
