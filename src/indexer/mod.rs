@@ -2,6 +2,7 @@
 
 #![allow(dead_code)]
 
+pub mod cache;
 pub mod extractor;
 pub mod index;
 pub mod parser;
